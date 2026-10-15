@@ -1,0 +1,41 @@
+{
+  "name": "rfid-attendance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Système de pointage RFID — serveur Node/Express (TypeScript) + client React/Vite",
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green npm:dev:server npm:dev:client",
+    "dev:server": "tsx watch server/src/index.ts",
+    "dev:client": "npm run dev --workspace client",
+    "build": "npm run build:server && npm run build:client",
+    "build:server": "tsc -p tsconfig.json",
+    "build:client": "npm run build --workspace client",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:migrate": "tsx server/src/db/cli/migrate.ts",
+    "db:seed": "tsx server/src/db/cli/seed.ts",
+    "db:verify": "tsx server/src/db/cli/verify.ts",
+    "api:verify": "tsx server/src/dev/verifyApi.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "node-hid": "^3.3.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.1",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^10.0.5",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,22 @@
+# Dépendances
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Builds
+client/dist/
+dist/
+
+# Environnement
+.env
+.env.*
+!.env.example
+
+# Base SQLite (état live — ne jamais supprimer ni committer)
+attendance.db
+attendance.db-wal
+attendance.db-shm
+
+# Logs
+*.log
+backups/
