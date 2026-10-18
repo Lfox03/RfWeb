@@ -71,7 +71,13 @@
 // /api/sessions/:id — 409 SESSION_OCCURRENCE_MOVE — generation idempotence
 // under a rolling horizon, the frozen roster following the propagated scope,
 // and every series change broadcast live over the WebSocket as
-// series:changed).
+// series:changed) and the local kiosk console (section 31 : the kiosk opens
+// on the SERVER SCREEN without logging in — an anonymous GET from the
+// loopback address acts as the read-only kiosk account, writes stay 401,
+// admin-only endpoints stay 403, remote callers are refused exactly as
+// before, a present-but-invalid cookie is never demoted, and the anonymous
+// loopback WebSocket is accepted but never closable through the session
+// invalidation/expiration sweeps).
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -119,7 +125,7 @@ class Client {
     cookie: string | undefined = undefined;
 
     async call(method: string, route: string, body?: unknown): Promise<ApiResponse> {
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = { ...this.extraHeaders };
         if (body !== undefined) headers["content-type"] = "application/json";
         if (this.cookie) headers.cookie = this.cookie;
         const res = await fetch(`${this.base}${route}`, {
@@ -141,8 +147,19 @@ class Client {
         return { status: res.status, body: parsed };
     }
 
-    constructor(public readonly base: string) {}
+    constructor(
+        public readonly base: string,
+        /** Extra request headers (e.g. the X-Forwarded-For of a simulated remote client). */
+        private readonly extraHeaders: Record<string, string> = {},
+    ) {}
 }
+
+// The suite binds to 127.0.0.1, so a REMOTE caller is simulated through
+// X-Forwarded-For (honored because TRUST_PROXY=1 above — same mechanism as
+// the rate-limit section): used wherever a check must assert the anonymous
+// behaviour WITHOUT the loopback kiosk exception. TEST-NET-3 (RFC 5737).
+const REMOTE_IP = "203.0.113.9";
+const REMOTE_HEADERS = { "x-forwarded-for": REMOTE_IP };
 
 async function main(): Promise<void> {
     try {
@@ -180,10 +197,11 @@ async function main(): Promise<void> {
         const teacher = new Client(base);
 
         console.log("── 1. Health and idle at startup ──");
-        let res = await anon.call("GET", "/api/health");
+        let         res = await anon.call("GET", "/api/health");
         ok("GET /api/health → 200 {status:ok}", res.status === 200 && res.body.status === "ok");
-        res = await anon.call("GET", "/api/sessions/active");
-        ok("route protégée sans session → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+        res = await new Client(base, REMOTE_HEADERS).call("GET", "/api/sessions/active");
+        ok("route protégée sans session (distant) → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+        // (La boucle locale, elle, bénéficie du compte borne implicite : section 31.)
 
         // Active session = null verified via an authenticated call further down;
         // here check the absence at service level (no session at boot).
@@ -511,8 +529,12 @@ async function main(): Promise<void> {
 
             // Refused connection: ws must answer HTTP 401 before the upgrade
             // (the client surfaces it as an « Unexpected server response »).
-            const wsRejected401 = async (url: string, cookie?: string): Promise<boolean> => {
-                const ws = new WebSocket(url, cookie ? { headers: { cookie } } : undefined);
+            // The no-cookie cases pass REMOTE_HEADERS: from the LOOPBACK the
+            // absent cookie is exactly the local kiosk (accepted — section 31).
+            const wsRejected401 = async (url: string, cookie?: string, extraHeaders?: Record<string, string>): Promise<boolean> => {
+                const headers: Record<string, string> = { ...extraHeaders };
+                if (cookie) headers.cookie = cookie;
+                const ws = new WebSocket(url, Object.keys(headers).length ? { headers } : undefined);
                 try {
                     await new Promise<void>((resolve, reject) => {
                         ws.once("open", () => reject(new Error("connexion WS acceptée alors qu'elle devait être refusée")));
@@ -593,9 +615,9 @@ async function main(): Promise<void> {
             res = await wsu.call("POST", "/api/auth/login", { username: "wsuser", password: "wsuser-pass-123" });
             ok("login dédié WS (wsuser) → 200", res.status === 200);
 
-            ok("WS sans cookie refusé (standalone, HTTP 401)", await wsRejected401(standaloneUrl));
-            ok("WS sans cookie refusé (/ws, HTTP 401)", await wsRejected401(mountedUrl));
-            ok("WS cookie invalide refusé (/ws, HTTP 401)", await wsRejected401(mountedUrl, "sid=00000000invalide"));
+            ok("WS sans cookie refusé (distant, standalone, HTTP 401)", await wsRejected401(standaloneUrl, undefined, REMOTE_HEADERS));
+            ok("WS sans cookie refusé (distant, /ws, HTTP 401)", await wsRejected401(mountedUrl, undefined, REMOTE_HEADERS));
+            ok("WS cookie invalide refusé (/ws, HTTP 401 — jamais repoli en borne)", await wsRejected401(mountedUrl, "sid=00000000invalide"));
 
             // Cookie that was valid but whose session has expired: rejected on
             // both transports (TTL simulated via authService.expireSession).
@@ -662,8 +684,8 @@ async function main(): Promise<void> {
         ok("ancien mot de passe refusé au login aussi", res.status === 401);
 
         console.log("── 13. Account management (Phase 5) ──");
-        res = await anon.call("GET", "/api/users");
-        ok("GET /api/users sans session → 401", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+        res = await new Client(base, REMOTE_HEADERS).call("GET", "/api/users");
+        ok("GET /api/users sans session (distant) → 401", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
 
         const boss = new Client(base);
         res = await boss.call("POST", "/api/auth/login", { username: "prof2", password: "prof2-pass-123" });
@@ -747,9 +769,9 @@ async function main(): Promise<void> {
         // password was reset there) — reports must work for both roles.
         res = await teacher.call("POST", "/api/auth/login", { username: "prof1", password: "nouveau-pass-123" });
         ok("reconnexion teacher (mot de passe réinitialisé) → 200", res.status === 200);
-        const nobody = new Client(base); // "anon" has been logged in as admin since section 13
+        const nobody = new Client(base, REMOTE_HEADERS); // distant : « anon » est connecté root depuis la section 13
         res = await nobody.call("GET", "/api/reports/sessions");
-        ok("GET /api/reports/sessions sans session → 401", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+        ok("GET /api/reports/sessions sans session (distant) → 401", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
         res = await teacher.call("GET", "/api/reports/sessions");
         ok("rapports accessibles au teacher → 200", res.status === 200 && Array.isArray(res.body.data));
         res = await admin.call("GET", "/api/reports/sessions?from=non");
@@ -883,8 +905,10 @@ async function main(): Promise<void> {
                 "export CSV : 1 en-tête + 3 lignes, jamais de données internes",
                 csvText.trim().split("\r\n").length === 4 && !csvText.includes("password") && !csvText.includes("6100001"),
             );
-            const csvAnon = await fetch(`${base}/api/reports/sessions/${sReport.id}/export`);
-            ok("export CSV sans session → 401 JSON (pas de fichier)", csvAnon.status === 401);
+            const csvAnon = await fetch(`${base}/api/reports/sessions/${sReport.id}/export`, {
+                headers: REMOTE_HEADERS,
+            });
+            ok("export CSV sans session (distant) → 401 JSON (pas de fichier)", csvAnon.status === 401);
         }
         res = await teacher.call("GET", "/api/reports/sessions/999999/export");
         ok("export d'une session inconnue → 404", res.status === 404 && res.body.error.code === "NOT_FOUND");
@@ -1301,10 +1325,11 @@ async function main(): Promise<void> {
             const { db, TARGET_SCHEMA_VERSION } = await import("../db");
 
             // NB: « anon » a été authentifié root en section 13 — un client
-            // neuf (sans cookie) est nécessaire pour le cas vraiment anonyme.
-            const noCookie = new Client(base);
+            // neuf, distant (X-Forwarded-For), est nécessaire pour le cas
+            // vraiment anonyme (la boucle locale aurait le borne implicite).
+            const noCookie = new Client(base, REMOTE_HEADERS);
             res = await noCookie.call("GET", "/api/backups");
-            ok("GET /api/backups sans session → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+            ok("GET /api/backups sans session (distant) → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
             res = await teacher.call("GET", "/api/backups");
             ok("GET /api/backups avec teacher → 403 FORBIDDEN", res.status === 403 && res.body.error.code === "FORBIDDEN");
             res = await teacher.call("POST", "/api/backups");
@@ -2099,7 +2124,7 @@ async function main(): Promise<void> {
         console.log("── 24. Journaux serveur : tampon mémoire en lecture admin (GET /api/logs) ──");
         {
             const { logger } = await import("../core/logger");
-            const guest = new Client(base); // aucune session : sonne l'alarme 401
+            const guest = new Client(base, REMOTE_HEADERS); // distant sans session : sonne l'alarme 401
             const vlog = logger.child({ component: "verify" });
             const tail = async (qs = ""): Promise<any[]> => {
                 const r = await admin.call("GET", `/api/logs${qs}`);
@@ -2107,10 +2132,11 @@ async function main(): Promise<void> {
             };
             const findIn = (rows: any[], event: string): any | undefined => rows.find((e) => e.event === event);
 
-            // 1) Accès : admin seul. Anonyme → 401, teacher → 403 (le tampon
-            //    peut porter des stack traces de 500 → jamais exposé aux autres).
+            // 1) Accès : admin seul. Anonyme distant → 401, teacher → 403 (le
+            //    tampon peut porter des stack traces de 500 → jamais exposé
+            //    aux autres ; la boucle locale anonyme → 403, section 31).
             res = await guest.call("GET", "/api/logs");
-            ok("anonyme → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+            ok("anonyme (distant) → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
             res = await teacher.call("GET", "/api/logs");
             ok("teacher → 403 FORBIDDEN", res.status === 403 && res.body.error.code === "FORBIDDEN");
             res = await admin.call("GET", "/api/logs");
@@ -2592,9 +2618,9 @@ async function main(): Promise<void> {
             const restoreClock = setClock(fake);
             try {
                 // ── Authentification et rôles (régression kiosk : lecture seule) ──
-                const guest26 = new Client(base);
+                const guest26 = new Client(base, REMOTE_HEADERS); // distant : la boucle locale aurait le borne
                 res = await guest26.call("GET", "/api/series");
-                ok("GET /api/series anonyme → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+                ok("GET /api/series anonyme (distant) → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
                 res = await guest26.call("POST", "/api/series", { label: "x", localTime: "08:00", startsOn: "2026-06-01", groupIds: [g1.id] });
                 ok("POST /api/series anonyme → 401", res.status === 401);
                 res = await borne.call("GET", "/api/series");
@@ -3587,6 +3613,158 @@ async function main(): Promise<void> {
             } finally {
                 restoreClock();
                 ws30.close();
+            }
+        }
+
+        console.log("── 31. Borne locale : accès kiosk anonyme depuis la boucle locale (écran du serveur) ──");
+        {
+            const { WebSocket: Ws31 } = await import("ws");
+            type Ws31Client = import("ws").WebSocket;
+            const { revalidateConnectedClients } = await import("../websocket/server");
+            const { isLoopbackAddress } = await import("../core/loopback");
+            const db31 = await import("../db"); // accès « live » : la réouverture simulée de la section 23 a rebordé les simpletons
+
+            // Silence : rien d'autre ne doit courir (mono-lecteur + scans).
+            for (const s of sessionService.list()) {
+                if (s.status === "running") await teacher.call("POST", `/api/sessions/${s.id}/stop`);
+                if (s.status === "scheduled") await teacher.call("POST", `/api/sessions/${s.id}/cancel`);
+            }
+
+            // ── Sémantique stricte de la boucle locale (le 127/8 complet ne
+            //    compte pas comme local — seul 127.0.0.1/::1) ──
+            ok(
+                "isLoopbackAddress : 127.0.0.1 et ::1 oui (forme ::ffff: incluse), tout le reste non",
+                isLoopbackAddress("127.0.0.1") &&
+                    isLoopbackAddress("::ffff:127.0.0.1") &&
+                    isLoopbackAddress("::1") &&
+                    !isLoopbackAddress("127.0.0.2") &&
+                    !isLoopbackAddress("::ffff:127.0.0.2") &&
+                    !isLoopbackAddress("10.0.0.1") &&
+                    !isLoopbackAddress(""),
+            );
+
+            const borneLocal = new Client(base); // aucun cookie : anonyme depuis 127.0.0.1
+            const borneDistant = new Client(base, REMOTE_HEADERS);
+
+            // ── Lecture HTTP : mêmes droits que le compte kiosk ──
+            res = await borneLocal.call("GET", "/api/auth/me");
+            ok(
+                "GET /api/auth/me sans cookie (boucle locale) → 200 pseudo-compte kiosk (amorçage client /kiosk)",
+                res.status === 200 && res.body.data.user.role === "kiosk" && res.body.data.user.username === "borne",
+            );
+            res = await borneLocal.call("GET", "/api/sessions/active");
+            ok("GET /api/sessions/active sans cookie (boucle locale) → 200", res.status === 200);
+            res = await borneLocal.call("GET", "/api/students");
+            ok("GET /api/students sans cookie → 200 (roster lisible par la borne)", res.status === 200 && Array.isArray(res.body.data));
+            res = await borneLocal.call("GET", "/api/groups");
+            ok("GET /api/groups sans cookie → 200", res.status === 200 && Array.isArray(res.body.data));
+            res = await borneLocal.call("GET", "/api/series");
+            ok("GET /api/series sans cookie → 200", res.status === 200);
+            res = await borneLocal.call("GET", "/api/reports/sessions");
+            ok("GET /api/reports/sessions sans cookie → 200", res.status === 200 && Array.isArray(res.body.data));
+
+            // ── Le réservé admin reste refusé : 403 (permissions kiosk, pas
+            //    clé magique) ──
+            res = await borneLocal.call("GET", "/api/users");
+            ok("GET /api/users sans cookie (boucle locale) → 403 FORBIDDEN (pas 401 : pseudo-compte kiosk)", res.status === 403 && res.body.error.code === "FORBIDDEN");
+            res = await borneLocal.call("GET", "/api/logs");
+            ok("GET /api/logs sans cookie (boucle locale) → 403", res.status === 403 && res.body.error.code === "FORBIDDEN");
+            res = await borneLocal.call("GET", "/api/backups");
+            ok("GET /api/backups sans cookie (boucle locale) → 403", res.status === 403 && res.body.error.code === "FORBIDDEN");
+
+            // ── Écriture : jamais — l'anonyme n'emprunte aucune identité ──
+            res = await borneLocal.call("POST", "/api/sessions", { label: "Écrite", groupId: g1.id });
+            ok("POST /api/sessions sans cookie (boucle locale) → 401 NOT_AUTHENTICATED", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+            res = await borneLocal.call("PATCH", `/api/groups/${g1.id}`, { name: "Piraté" });
+            ok("PATCH /api/groups/:id sans cookie → 401", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+            res = await borneLocal.call("POST", "/api/reader/beep");
+            ok("POST /api/reader/beep sans cookie → 401", res.status === 401);
+            res = await borneLocal.call("DELETE", "/api/students/1");
+            ok("DELETE /api/students/1 sans cookie → 401", res.status === 401);
+
+            // ── L'exception ne vaut PAS pour un appel distant ──
+            res = await borneDistant.call("GET", "/api/sessions/active");
+            ok("GET /api/sessions/active sans cookie (distant) → 401", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+            res = await borneDistant.call("GET", "/api/auth/me");
+            ok("GET /api/auth/me sans cookie (distant) → 401", res.status === 401);
+            res = await borneDistant.call("GET", "/api/students");
+            ok("GET /api/students sans cookie (distant) → 401", res.status === 401);
+            // TRUST_PROXY=1 (décidé pour la suite) : l'adresse retenue est bien
+            // celle de X-Forwarded-For — un proxy local sur boucle locale peut
+            // donc légitimement propager un client local.
+            res = await new Client(base, { "x-forwarded-for": "127.0.0.1" }).call("GET", "/api/sessions/active");
+            ok("GET /api/sessions/active avec X-Forwarded-For 127.0.0.1 (TRUST_PROXY=1) → 200 (contrat proxy)", res.status === 200);
+
+            // ── Cookie présent mais mort : JAMAIS repoli en borne ──
+            const peume = new Client(base);
+            peume.cookie = "sid=00000000peume";
+            res = await peume.call("GET", "/api/sessions/active");
+            ok("cookie invalide (boucle locale) → 401 (pas dégradé en borne)", res.status === 401 && res.body.error.code === "NOT_AUTHENTICATED");
+            const deconnecte = new Client(base);
+            deconnecte.cookie = "sid=";
+            res = await deconnecte.call("GET", "/api/auth/me");
+            ok("cookie vidé par logout (« sid= ») → 401 (attribut présent = jamais borne)", res.status === 401);
+
+            // ── Une vraie session connectée n'est jamais rétrogradée ──
+            res = await teacher.call("POST", "/api/groups", { name: "G-P6-OK" });
+            ok("teacher authentifié via boucle locale : écritures toujours possibles (pas de rétrogradation)", res.status === 201);
+
+            // ── WebSocket : handshake anonyme accepté depuis la boucle locale ──
+            // Messages tamponnés DÈS la création : le snapshot « status » peut
+            // précéder tout handler enregistré après l'event « open ».
+            const inbox31: any[] = [];
+            const ws31: Ws31Client = new Ws31(`ws://127.0.0.1:${httpPort}/ws`);
+            ws31.on("message", (m: Buffer) => inbox31.push(JSON.parse(m.toString())));
+            ws31.on("error", () => { /* le rejet du handshake est traité par la promesse « open » */ });
+            try {
+                await new Promise<void>((resolve, reject) => {
+                    ws31.once("open", () => resolve());
+                    ws31.once("error", (err: Error) => reject(err));
+                    setTimeout(() => reject(new Error("timeout handshake WS anonyme")), 3000);
+                });
+                await waitFor("snapshot « status » sur le WS anonyme", () => inbox31.some((m) => m.event === "status"));
+                ok("WS sans cookie (boucle locale) → handshake accepté, snapshot « status » reçu", true);
+
+                ws31.send(JSON.stringify({ cmd: "get_status" }));
+                await waitFor("réponse « get_status » sur le WS anonyme", () => inbox31.filter((m) => m.event === "status").length >= 2);
+                ok("commande « get_status » servie au WS anonyme", true);
+
+                // Les événements du domaine parviennent bien à la borne
+                // anonyme (c'est par là qu'elle projette l'affluence) :
+                // session dédiée + scan, arrêt immédiat.
+                res = await teacher.call("POST", "/api/sessions", { label: "Scan borne locale", groupId: g1.id });
+                const s31 = res.body.data;
+                sessionService.start(s31.id);
+                void attendanceService.handleScan("1234567");
+                await waitFor("attendance:scanned sur le WS anonyme", () =>
+                    inbox31.some((m) => m.event === "attendance:scanned" && m.content.sessionId === s31.id),
+                );
+                const ev31 = inbox31.find((m) => m.event === "attendance:scanned" && m.content.sessionId === s31.id);
+                ok("attendance:scanned diffusé au client WS anonyme (kiosk local)", ev31.content.result === "unknown");
+                sessionService.stop(s31.id);
+
+                // ── Le client kiosk local n'a AUCUNE session derrière lui :
+                //    ni la balayade d'expiration, ni la destruction d'une autre
+                //    session ne doivent le fermer ──
+                const closed31 = new Promise<"closed">((resolve) => ws31.once("close", () => resolve("closed")));
+                revalidateConnectedClients();
+                res = await admin.call("POST", "/api/users", { username: "p6tmp", password: "p6tmp-pass-123", role: "teacher" });
+                const p6 = new Client(base);
+                await p6.call("POST", "/api/auth/login", { username: "p6tmp", password: "p6tmp-pass-123" });
+                const p6Row = db31.userRepository.findByUsername("p6tmp")!;
+                // Détruit la session de p6tmp → notifie le hub (ferme SES
+                // connexions) — l'anonyme, lui, n'a pas de token.
+                await admin.call("PATCH", `/api/users/${p6Row.id}`, { password: "p6tmp-nouveau-123" });
+                const stillOpen = await Promise.race([
+                    closed31,
+                    new Promise<"open">((resolve) => setTimeout(() => resolve("open"), 500)),
+                ]);
+                ok(
+                    "balayage d'expiration + destruction d'une AUTRE session ne ferment pas le WS anonyme (aucun token)",
+                    stillOpen === "open",
+                );
+            } finally {
+                ws31.terminate();
             }
         }
     } finally {

@@ -6,9 +6,12 @@
 //
 // Authentication: the handshake must carry the same HTTP-only « sid » cookie
 // as the REST API; an invalid/expired/absent session gets HTTP 401 and no
-// WebSocket is ever created (see websocket/server.ts). A session destroyed
+// WebSocket is ever created (see websocket/server.ts). Exception: a handshake
+// with NO cookie from the loopback address is accepted as the read-only
+// local kiosk (the kiosk opened on the server screen). A session destroyed
 // while connected (logout, password reset) closes the connection with code
-// 1008. The protocol below is unchanged: authentication happens before it.
+// 1008 (never the local kiosk, which has no session). The protocol below is
+// unchanged: authentication happens before it.
 //
 // Messages SERVER → CLIENT — always { "event": string, "content": object } :
 //
@@ -68,9 +71,12 @@ export const WS_CLOSE_INVALID_SESSION = 1008;
 
 // Authenticated clients: socket → session token (resolved during the WS
 // handshake by websocket/server.ts, same sid cookie as the HTTP API).
-const clients = new Map<WebSocket, string>();
+// null = anonymous local-kiosk connection (no cookie, loopback): it has NO
+// session behind it, so the destroyed/expiration sweeps below never apply to
+// it — it only closes when the kiosk screen itself goes away.
+const clients = new Map<WebSocket, string | null>();
 
-export function addClient(ws: WebSocket, token: string): void {
+export function addClient(ws: WebSocket, token: string | null): void {
     clients.set(ws, token);
 }
 
@@ -92,6 +98,7 @@ export function closeClientsFor(
 ): number {
     let closed = 0;
     for (const [client, token] of clients) {
+        if (token === null) continue; // local kiosk: nothing to invalidate
         if (!predicate(token)) continue;
         closed += 1;
         try {

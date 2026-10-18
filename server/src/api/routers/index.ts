@@ -1,10 +1,13 @@
 ﻿// Assembly of the /api router — versioned, consistent, session-protected.
 //
 // Policy: /api/health and /api/auth/* are public; EVERYTHING else requires a
-// valid session (authRequired); account management, database backups and the
-// server log tail are reserved for admins (requireRole in routers/users.ts,
-// routers/backups.ts, routers/logs.ts); the « kiosk » role (kiosk terminal) is
-// READ-ONLY across the whole API (it displays, never modifies).
+// valid session (authRequired) — EXCEPT anonymous GETs coming from the
+// loopback address, which act as the read-only kiosk account (attachLocalKiosk
+// — the kiosk opened on the server screen); account management, database
+// backups and the server log tail are reserved for admins (requireRole in
+// routers/users.ts, routers/backups.ts, routers/logs.ts); the « kiosk » role
+// (kiosk terminal) is READ-ONLY across the whole API (it displays, never
+// modifies).
 
 import { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
@@ -12,7 +15,7 @@ import type { NextFunction, Request, Response } from "express";
 import { AuthorizationError } from "../../core/errors";
 import { healthRouter } from "../health";
 import { apiNotFound } from "../middleware/error";
-import { attachAuth, authRequired } from "../middleware/auth";
+import { attachAuth, attachLocalKiosk, authRequired } from "../middleware/auth";
 import { authRouter } from "./auth";
 import { usersRouter } from "./users";
 import { groupsRouter } from "./groups";
@@ -28,6 +31,12 @@ import { logsRouter } from "./logs";
 export const apiRouter = Router();
 
 apiRouter.use(attachAuth);
+
+// Local console: an anonymous GET from the loopback address acts as the
+// read-only kiosk account (api/middleware/auth.ts). Mounted BEFORE the public
+// routers so GET /api/auth/me can bootstrap the /kiosk client without login
+// on the server screen.
+apiRouter.use(attachLocalKiosk);
 
 // Public.
 apiRouter.use(healthRouter);

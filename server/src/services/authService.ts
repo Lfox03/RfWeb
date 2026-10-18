@@ -26,6 +26,13 @@ export interface AuthUser {
     role: UserRole;
 }
 
+// Pseudo-user for the local console (the kiosk opened on the server screen,
+// loopback only): NEVER persisted, NEVER associated with a token. Attached to
+// anonymous read requests coming from the machine itself by
+// api/middleware/auth.ts (HTTP) and websocket/server.ts (handshake). Same
+// privileges as a kiosk account: read-only, admin endpoints refused.
+export const LOCAL_KIOSK_USER: AuthUser = { id: 0, username: "borne", role: "kiosk" };
+
 // Account view for user management (GET /api/users and friends) — adds the
 // non-sensitive lifecycle metadata an admin needs; never password_hash.
 export interface UserAccount extends AuthUser {

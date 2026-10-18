@@ -18,6 +18,10 @@
 // the protocol and the frontend stay untouched. A session destroyed while
 // its connection is open (logout, password reset) or expiring (TTL) closes
 // that connection with code 1008 — same semantics as the next HTTP 401.
+// EXCEPTION (local console): a handshake with NO cookie coming from the
+// loopback address is accepted as the read-only kiosk (the kiosk opened on
+// the server screen) — registered with a null token, hence never touched by
+// the invalidation/expiration sweeps below.
 
 import type * as http from "node:http";
 
@@ -27,7 +31,8 @@ import { readCookie } from "../auth/cookie";
 import { hashToken, onSessionDestroyed } from "../auth/sessionStore";
 import { COOKIE_NAME, WS_PORT } from "../config/env";
 import { errorFields, logger } from "../core/logger";
-import { resolveToken } from "../services/authService";
+import { isLocalRequest } from "../core/loopback";
+import { LOCAL_KIOSK_USER, resolveToken } from "../services/authService";
 import type { AuthUser } from "../services/authService";
 import {
     WS_CLOSE_INVALID_SESSION,
@@ -55,7 +60,8 @@ export interface WebSocketHandle {
 
 interface WsAuth {
     user: AuthUser;
-    token: string;
+    /** null = local kiosk (no cookie, loopback): no session behind it. */
+    token: string | null;
 }
 
 // verifyClient → "connection" handoff: ws passes THE SAME request object to
@@ -68,10 +74,22 @@ const handshakes = new WeakMap<http.IncomingMessage, WsAuth>();
 // to its own upgrade handling AND to handleUpgrade). Must stay SYNCHRONOUS
 // with exactly one parameter (ws detects the async flavor via fn.length === 2).
 const verifyWebSocketClient: VerifyClientCallbackSync = (info) => {
-    const resolved = resolveToken(readCookie(info.req.headers.cookie, COOKIE_NAME));
-    if (!resolved) return false;
-    handshakes.set(info.req, resolved);
-    return true;
+    const rawToken = readCookie(info.req.headers.cookie, COOKIE_NAME);
+    if (rawToken !== undefined) {
+        // A cookie is present: it MUST resolve — an invalid/expired one is
+        // refused, never silently demoted to the local-kiosk identity.
+        const resolved = resolveToken(rawToken);
+        if (!resolved) return false;
+        handshakes.set(info.req, resolved);
+        return true;
+    }
+    // No cookie at all: accepted ONLY from the loopback address, as the
+    // read-only kiosk pseudo-user (the kiosk opened on the server screen).
+    if (isLocalRequest(info.req.headers, info.req.socket?.remoteAddress)) {
+        handshakes.set(info.req, { user: LOCAL_KIOSK_USER, token: null });
+        return true;
+    }
+    return false;
 };
 
 // Shared per-connection wiring: initial status snapshot, get_status command,
@@ -80,8 +98,9 @@ function registerClient(ws: WebSocket, req: http.IncomingMessage, getSnapshot: (
     const auth = handshakes.get(req);
     handshakes.delete(req);
     if (!auth) {
-        // Cannot happen: verifyWebSocketClient gates every upgrade. Never
-        // accept an anonymous connection.
+        // Cannot happen: verifyWebSocketClient gates every upgrade. The only
+        // unauthenticated connection ever admitted is the loopback kiosk, and
+        // it comes with a null token, not with a missing handshake entry.
         ws.close(WS_CLOSE_INVALID_SESSION, "Session invalide");
         return;
     }

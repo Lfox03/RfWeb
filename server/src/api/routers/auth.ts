@@ -39,6 +39,14 @@ authRouter.post(
 authRouter.get(
     "/me",
     asyncHandler(async (req, res) => {
+        // Local console (attachLocalKiosk): an identity WITHOUT any token —
+        // return the kiosk pseudo-user so the client can bootstrap /kiosk on
+        // the server screen without logging in. A present-but-invalid cookie
+        // never reaches here as anonymous (req.authToken stays set → 401).
+        if (!req.authToken && req.user) {
+            ok(res, { user: req.user });
+            return;
+        }
         const resolved = resolveToken(req.authToken);
         if (!resolved || !req.user) throw new AuthenticationError();
         ok(res, { user: resolved.user });
