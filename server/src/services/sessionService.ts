@@ -17,17 +17,27 @@ import { logger } from "../core/logger";
 import {
     db,
     groupRepository,
+    sessionParticipantRepository,
     sessionRepository,
     sessionRosterRepository,
+    studentRepository,
     userRepository,
 } from "../db";
 import { isoNow } from "../db/types";
-import type { SessionRow } from "../db/types";
+import type { SessionParticipantRow, SessionRow } from "../db/types";
 import type { CalendarSessionRow } from "../db/repositories/sessions";
 import { broadcastEvent } from "../websocket/hub";
 import { startScan, stopScan } from "./scanService";
 
 const sessionLog = logger.child({ component: "session" });
+
+// An individual inclusion/exclusion delta submitted for a session: included =
+// true forces the student into the roster regardless of group membership,
+// included = false removes them despite it.
+interface ParticipantDeltaInput {
+    studentId: number;
+    included: boolean;
+}
 
 // Session + group scope (session_groups association table) + creator username
 // (NULL when unknown : created before migration 007 or user deleted).
@@ -65,20 +75,49 @@ export function get(id: number): SessionWithGroups {
     return withGroups(session);
 }
 
+// Session detail (GET /api/sessions/:id) : the group scope PLUS the session's
+// OWN individual participant deltas (session_participants). For a standalone
+// one-off session every delta is explicit ; a series occurrence also carries
+// the inherited copies of its series' scope. A client pre-fills its
+// individual-participant editor from this list, and PATCH /api/sessions/:id
+// replaces the whole set.
+export interface SessionDetail extends SessionWithGroups {
+    participants: SessionParticipantRow[];
+}
+
+export function detail(id: number): SessionDetail {
+    return {
+        ...get(id),
+        participants: sessionParticipantRepository.listBySession(id),
+    };
+}
+
 export function getActive(): SessionWithGroups | null {
     const session = sessionRepository.findActive();
     return session ? withGroups(session) : null;
 }
 
+// Individual deltas reference students by id : every referenced student must
+// exist (duplicate studentIds are tolerated — the repository upserts, the LAST
+// decision wins, mirroring the series behavior).
+function assertParticipantsExist(participants: ParticipantDeltaInput[]): void {
+    for (const p of participants) {
+        if (!Number.isInteger(p.studentId) || p.studentId < 1 || !studentRepository.findById(p.studentId)) {
+            throw new ValidationError(`Élève ${p.studentId} introuvable.`);
+        }
+    }
+}
+
 export function create(input: {
     label: string;
     groupIds?: number[];
+    participants?: ParticipantDeltaInput[];
     scheduledAt: string;
     durationMinutes?: number;
     createdBy?: number | null;
 }): SessionWithGroups {
     const groupIds = [...new Set(input.groupIds ?? [])];
-    // At least one group: no more "all students" fallback at creation
+    // At least one group : no more "all students" fallback at creation
     // (historical sessions without groups remain readable, their roster
     // remains the coverage of all students).
     if (groupIds.length === 0) {
@@ -89,8 +128,23 @@ export function create(input: {
             throw new ValidationError(`Groupe ${groupId} introuvable.`);
         }
     }
-    const session = sessionRepository.create({ ...input, groupIds });
-    sessionLog.info("session.created", { session_id: session.id, group_ids: groupIds });
+    const participants = input.participants ?? [];
+    // A standalone one-off session's individual deltas are always explicit
+    // (never inherited from a series) — validated up front so a bad student id
+    // never creates a half-built session.
+    assertParticipantsExist(participants);
+    const session = db.transaction(() => {
+        const created = sessionRepository.create({ ...input, groupIds });
+        for (const p of participants) {
+            sessionParticipantRepository.upsert(created.id, p.studentId, p.included);
+        }
+        return created;
+    })();
+    sessionLog.info("session.created", {
+        session_id: session.id,
+        group_ids: groupIds,
+        participants: participants.length,
+    });
     return withGroups(session);
 }
 
@@ -151,10 +205,21 @@ export function start(id: number): SessionWithGroups {
 // SESSION_OCCURRENCE_MOVE refuses it instead (« this and following » moves go
 // through PATCH /api/series/:id, seriesService.editSeriesFrom, which keeps the
 // whole local scheduling coherent). label and duration stay editable : they
-// never touch the identity.
+// never touch the identity. The individual participant selection (the
+// inclusion/exclusion deltas) is editable too — for ANY scheduled row it
+// REPLACES the session's whole delta set (an explicit per-occurrence override
+// on a series occurrence, the full selection on a one-off standalone session).
+// The schedule rewrite and the delta replacement happen in ONE transaction : a
+// late validation error (e.g. an unknown student) rolls both back so a session
+// is never left half-edited.
 export function updateScheduled(
     id: number,
-    patch: { label?: string; scheduledAt?: string; durationMinutes?: number },
+    patch: {
+        label?: string;
+        scheduledAt?: string;
+        durationMinutes?: number;
+        participants?: ParticipantDeltaInput[];
+    },
 ): SessionWithGroups {
     const session = get(id);
     if (session.status !== "scheduled") {
@@ -169,17 +234,34 @@ export function updateScheduled(
             "Une occurrence d'une série ne peut pas être déplacée individuellement — modifiez la série « à partir de cette occurrence » pour la reprogrammer.",
         );
     }
-    if (patch.label === undefined && patch.scheduledAt === undefined && patch.durationMinutes === undefined) {
-        throw new ValidationError("Aucune modification fournie : « label », « scheduledAt » ou « durationMinutes ».");
+    if (
+        patch.label === undefined &&
+        patch.scheduledAt === undefined &&
+        patch.durationMinutes === undefined &&
+        patch.participants === undefined
+    ) {
+        throw new ValidationError(
+            "Aucune modification fournie : « label », « scheduledAt », « durationMinutes » ou « participants ».",
+        );
     }
+    if (patch.participants !== undefined) assertParticipantsExist(patch.participants);
     const updated = withGroups(
-        sessionRepository.updateSchedule(id, {
-            label: patch.label,
-            scheduledAt: patch.scheduledAt,
-            durationMinutes: patch.durationMinutes,
-        })!,
+        db.transaction(() => {
+            const scheduled = sessionRepository.updateSchedule(id, {
+                label: patch.label,
+                scheduledAt: patch.scheduledAt,
+                durationMinutes: patch.durationMinutes,
+            });
+            if (patch.participants !== undefined) {
+                sessionParticipantRepository.replaceParticipants(id, patch.participants);
+            }
+            return scheduled ?? sessionRepository.findById(id)!;
+        })(),
     );
-    sessionLog.info("session.updated", { session_id: id });
+    sessionLog.info("session.updated", {
+        session_id: id,
+        participants: patch.participants !== undefined ? patch.participants.length : undefined,
+    });
     broadcastEvent("session:updated", { session: updated });
     return updated;
 }

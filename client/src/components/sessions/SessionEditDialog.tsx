@@ -12,6 +12,14 @@
 // Une session autonome n'a qu'une portée. Les 409 (occurrence déjà démarrée,
 // série annulée, patron invalide) sont signalés par un toast puis le
 // calendrier est rechargé : l'état affiché était périmé.
+//
+// Sélection individuelle de participants : pour une SÉANCE PONCTUELLE
+// autonome, la portée « uniquement cette séance » expose aussi l'éditeur de
+// participants (écarts d'inclusion/exclusion au-dessus des groupes) — la liste
+// est pré-remplie depuis GET /api/sessions/:id et PATCH remplace toute la
+// liste. Pour une occurrence de série, les écarts se gèrent au niveau de la
+// série (portée « et les suivantes ») ; on n'écrit pas de dérogation
+// individuelle par occurrence ici.
 
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
@@ -19,18 +27,21 @@ import type { FormEvent } from "react";
 import { ApiError, toUiMessage } from "../../api/client";
 import { listGroups } from "../../api/groups";
 import { editSeriesFrom, getSeries } from "../../api/series";
-import { updateSession } from "../../api/sessions";
+import { getSession, updateSession } from "../../api/sessions";
 import { listStudents } from "../../api/students";
 import { useToast } from "../../hooks/useToast";
 import { toLocalInputValue } from "../../lib/format";
 import type {
     GroupRow,
     SeriesDetail,
+    SessionDetail,
     StudentWithCardRow,
 } from "../../types/domain";
 import { ErrorState, Loading } from "../common/StateBlocks";
 import { SeriesForm } from "./SeriesForm";
 import type { SeriesFormValues } from "./SeriesForm";
+import { StudentPicker } from "./StudentPicker";
+import type { ParticipantDeltas } from "./StudentPicker";
 
 // Sous-ensemble de la ligne de session dont le dialogue a besoin : aussi bien
 // une ligne GET /sessions/calendar qu'un GET /sessions/:id (le dialogue
@@ -69,6 +80,12 @@ export function SessionEditDialog({ row, onChanged, onDone }: SessionEditDialogP
     const [groups, setGroups] = useState<GroupRow[]>([]);
     const [students, setStudents] = useState<StudentWithCardRow[]>([]);
 
+    // Sélection individuelle (séance ponctuelle autonome uniquement) : détail
+    // courant (groupes + écarts) pré-remplit l'éditeur ; l'envoi remplace tout.
+    const [standalone, setStandalone] = useState<SessionDetail | null>(null);
+    const [standaloneError, setStandaloneError] = useState<unknown>(null);
+    const [participants, setParticipants] = useState<ParticipantDeltas>(new Map());
+
     useEffect(() => {
         if (scope !== "series" || row.series_id === null) return;
         let cancelled = false;
@@ -93,6 +110,31 @@ export function SessionEditDialog({ row, onChanged, onDone }: SessionEditDialogP
         };
     }, [scope, row.series_id]);
 
+    // Séance ponctuelle autonome : chargement des écarts courants + des
+    // étudiants (une seule fois). L'éditeur reste désactivé tant que le détail
+    // n'est pas là, pour qu'une sauvegarde prématurée n'éffe pas la liste.
+    useEffect(() => {
+        if (isOccurrence) return;
+        let cancelled = false;
+        setStandaloneError(null);
+        void (async () => {
+            try {
+                const [s, st] = await Promise.all([getSession(row.id), listStudents()]);
+                if (cancelled) return;
+                setStandalone(s);
+                setStudents(st.rows);
+                const map: ParticipantDeltas = new Map();
+                for (const p of s.participants) map.set(p.student_id, p.included === 1);
+                setParticipants(map);
+            } catch (err) {
+                if (!cancelled) setStandaloneError(err);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [row.id, isOccurrence]);
+
     // Échec → toast serveur + resynchronisation : un 409 signifie presque
     // toujours que l'occurrence a démarré (ou la série changé) depuis l'ouverture.
     const fail = (err: unknown): void => {
@@ -107,6 +149,9 @@ export function SessionEditDialog({ row, onChanged, onDone }: SessionEditDialogP
         e.preventDefault();
         const trimmed = label.trim();
         if (!trimmed) return;
+        // Séance autonome : l'éditeur de participants doit être chargé avant
+        // d'envoyer (sinon on écraserait toute la liste des écarts par vide).
+        if (!isOccurrence && standalone === null) return;
         setBusy(true);
         try {
             await updateSession(row.id, {
@@ -117,6 +162,16 @@ export function SessionEditDialog({ row, onChanged, onDone }: SessionEditDialogP
                 // Le déplacement passe par la portée « et les suivantes ».
                 ...(isOccurrence ? {} : { scheduledAt: new Date(scheduledAt).toISOString() }),
                 durationMinutes: Number(duration),
+                // Écarts individuels : REMPLACEMENT de toute la liste (le serveur
+                // ne fusionne pas). Réservé à la séance ponctuelle autonome.
+                ...(isOccurrence
+                    ? {}
+                    : {
+                          participants: [...participants.entries()].map(([studentId, included]) => ({
+                              studentId,
+                              included,
+                          })),
+                      }),
             });
             push("success", "Séance mise à jour.");
             onChanged();
@@ -255,6 +310,35 @@ export function SessionEditDialog({ row, onChanged, onDone }: SessionEditDialogP
                             Session autonome : le déplacement ne concerne que ce cours.
                         </p>
                     )}
+
+                    {!isOccurrence && (
+                        <fieldset className="field">
+                            <legend>Participants individuels</legend>
+                            <p className="field__hint">
+                                Par dérogation à l&apos;appartenance aux groupes : un étudiant « inclus »
+                                participe sans être dans un groupe de la séance ; un étudiant « exclu »
+                                n&apos;y participe pas malgré son groupe. Enregistrer remplace la liste
+                                complète des écarts de cette séance.
+                            </p>
+                            {standaloneError !== null ? (
+                                <ErrorState
+                                    error={standaloneError}
+                                    text="Impossible de charger les participants de la séance."
+                                />
+                            ) : standalone === null ? (
+                                <Loading text="Chargement des participants…" />
+                            ) : (
+                                <StudentPicker
+                                    groups={groups}
+                                    students={students}
+                                    selectedGroupIds={standalone.group_ids}
+                                    value={participants}
+                                    onChange={setParticipants}
+                                />
+                            )}
+                        </fieldset>
+                    )}
+
                     <div className="form__actions">
                         <button type="button" className="btn" onClick={onDone} disabled={busy}>
                             Annuler
@@ -262,7 +346,12 @@ export function SessionEditDialog({ row, onChanged, onDone }: SessionEditDialogP
                         <button
                             type="submit"
                             className="btn btn--primary"
-                            disabled={busy || label.trim() === ""}
+                            disabled={
+                                busy ||
+                                label.trim() === "" ||
+                                standaloneError !== null ||
+                                (!isOccurrence && standalone === null)
+                            }
                         >
                             {busy ? "Enregistrement…" : "Enregistrer"}
                         </button>

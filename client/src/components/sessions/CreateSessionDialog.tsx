@@ -66,7 +66,11 @@ export function CreateSessionDialog({
     const handleOnce = async (values: SessionFormValues): Promise<void> => {
         setBusy(true);
         try {
-            await createSession(values);
+            await createSession({
+                ...values,
+                // Aucun écart → champ omis (le serveur crée sans participants).
+                participants: values.participants.length > 0 ? values.participants : undefined,
+            });
             onCreatedOnce(values.label);
         } catch (err) {
             onError(toUiMessage(err));
@@ -126,6 +130,7 @@ export function CreateSessionDialog({
             {mode === "once" ? (
                 <SessionForm
                     groups={groups}
+                    students={students}
                     busy={busy}
                     initialScheduledAt={initialScheduledAt}
                     initialDurationMinutes={initialDurationMinutes}

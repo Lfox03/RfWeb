@@ -23,6 +23,7 @@ import {
     vIntArray,
     vLocalDate,
     vLocalTime,
+    vParticipants,
     vString,
     type Body,
 } from "../validate";
@@ -84,33 +85,6 @@ function vWeekday(body: Body): number | null | undefined {
 function vEndsOn(body: Body): string | null | undefined {
     if (body.endsOn === null) return null;
     return vLocalDate(body, "endsOn");
-}
-
-function vParticipants(
-    body: Body,
-): Array<{ studentId: number; included: boolean }> | undefined {
-    const raw = body.participants;
-    if (raw === undefined || raw === null) return undefined;
-    if (!Array.isArray(raw)) throw new ValidationError("Le champ « participants » doit être un tableau.");
-    if (raw.length > 500) throw new ValidationError("Le champ « participants » doit contenir au plus 500 éléments.");
-    return raw.map((item) => {
-        if (typeof item !== "object" || item === null || Array.isArray(item)) {
-            throw new ValidationError("Chaque participant doit être un objet { studentId, included }.");
-        }
-        const entry = item as Record<string, unknown>;
-        for (const key of Object.keys(entry)) {
-            if (key !== "studentId" && key !== "included") {
-                throw new ValidationError(`Champ inconnu : « ${key} ».`);
-            }
-        }
-        if (typeof entry.studentId !== "number" || !Number.isInteger(entry.studentId) || entry.studentId < 1) {
-            throw new ValidationError("Le champ « studentId » doit être un entier ≥ 1.");
-        }
-        if (typeof entry.included !== "boolean") {
-            throw new ValidationError("Le champ « included » doit être un booléen.");
-        }
-        return { studentId: entry.studentId, included: entry.included };
-    });
 }
 
 // Merged partial template from a validated body (only the provided keys).

@@ -3,9 +3,18 @@ import type { ListResult } from "../types/api";
 import type {
     CalendarSessionRow,
     SessionAttendanceRow,
+    SessionDetail,
     SessionScanRow,
     SessionWithGroups,
 } from "../types/domain";
+
+// Individual participant delta (same shape as a series) : included = true
+// forces the student into the session despite the group scope, included =
+// false removes them from it despite their group.
+export interface ParticipantInput {
+    studentId: number;
+    included: boolean;
+}
 
 export interface SessionInput {
     label: string;
@@ -13,6 +22,10 @@ export interface SessionInput {
     // required (400 rejection otherwise). Sending "groupId" (single) is still
     // accepted by the API but no longer used by the client.
     groupIds: number[];
+    // Optional individual deltas ON TOP of the groups (the picker only sends
+    // real deviations — inclusions outside the checked groups, exclusions
+    // despite a checked group). Omitted when empty.
+    participants?: ParticipantInput[];
     scheduledAt?: string;
     durationMinutes?: number;
 }
@@ -25,8 +38,11 @@ export function getActiveSession(): Promise<SessionWithGroups | null> {
     return get<SessionWithGroups | null>("/sessions/active");
 }
 
-export function getSession(id: number): Promise<SessionWithGroups> {
-    return get<SessionWithGroups>(`/sessions/${id}`);
+// Détail d'une séance : groupes + ÉCARTS INDIVIDUELS (participants). C'est la
+// forme qui pré-remplit l'éditeur de participants (« uniquement cette
+// séance ») ; PATCH remplace toute la liste des écarts.
+export function getSession(id: number): Promise<SessionDetail> {
+    return get<SessionDetail>(`/sessions/${id}`);
 }
 
 export function createSession(input: SessionInput): Promise<SessionWithGroups> {
@@ -34,14 +50,17 @@ export function createSession(input: SessionInput): Promise<SessionWithGroups> {
 }
 
 // Édition d'UNE session « programmée » (« modifier ce cours ») : libellé,
-// instant UTC et/ou durée. Le serveur refuse (409 SESSION_INVALID_TRANSITION)
-// toute autre statut — l'historique démarré/terminé n'est jamais réécrit.
-// L'identité de série d'une occurrence reste intacte (« cette occurrence et
-// les suivantes » passe par PATCH /api/series/:id).
+// instant UTC et/ou durée et/ou sélection individuelle de participants. Le
+// champ « participants », s'il est présent, REMPLACE toute la liste des écarts
+// de la séance (le serveur ne fusionne pas). Le serveur refuse (409
+// SESSION_INVALID_TRANSITION) tout autre statut — l'historique démarré/terminé
+// n'est jamais réécrit. L'identité de série d'une occurrence reste intacte
+// (« cette occurrence et les suivantes » passe par PATCH /api/series/:id).
 export interface SessionSchedulePatch {
     label?: string;
     scheduledAt?: string;
     durationMinutes?: number;
+    participants?: ParticipantInput[];
 }
 
 export function updateSession(id: number, patchBody: SessionSchedulePatch): Promise<SessionWithGroups> {

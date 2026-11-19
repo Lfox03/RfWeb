@@ -68,9 +68,6 @@ export function AppLayout() {
                     <NavLink to="/sessions" className="sidebar__link">
                         Sessions
                     </NavLink>
-                    <NavLink to="/kiosk" className="sidebar__link">
-                        Mode borne
-                    </NavLink>
                     {isAdmin && (
                         <>
                             <NavLink to="/users" className="sidebar__link">
@@ -84,6 +81,9 @@ export function AppLayout() {
                             </NavLink>
                         </>
                     )}
+                    <NavLink to="/kiosk" className="sidebar__link">
+                        Mode borne
+                    </NavLink>
                 </nav>
 
                 <main className="content">

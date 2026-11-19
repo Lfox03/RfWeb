@@ -208,6 +208,41 @@ export function rejectUnknownFields(obj: Body, allowed: readonly string[]): void
     }
 }
 
+export interface ParticipantInput {
+    studentId: number;
+    included: boolean;
+}
+
+// Individual inclusion/exclusion deltas (« participants ») shared by the
+// session and series routers: an array of { studentId, included } (included =
+// true forces the student in, false removes them). Shape-only — deciding which
+// students EXIST and merging the deltas with the group scope is service logic.
+// Absent/null is undefined ; an empty array is a valid « no deltas » value.
+export function vParticipants(obj: Body, field = "participants"): ParticipantInput[] | undefined {
+    const raw = obj[field];
+    if (raw === undefined || raw === null) return undefined;
+    if (!Array.isArray(raw)) throw new ValidationError(`Le champ « ${field} » doit être un tableau.`);
+    if (raw.length > 500) throw new ValidationError(`Le champ « ${field} » doit contenir au plus 500 éléments.`);
+    return raw.map((item) => {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) {
+            throw new ValidationError("Chaque participant doit être un objet { studentId, included }.");
+        }
+        const entry = item as Record<string, unknown>;
+        for (const key of Object.keys(entry)) {
+            if (key !== "studentId" && key !== "included") {
+                throw new ValidationError(`Champ inconnu : « ${key} ».`);
+            }
+        }
+        if (typeof entry.studentId !== "number" || !Number.isInteger(entry.studentId) || entry.studentId < 1) {
+            throw new ValidationError("Le champ « studentId » doit être un entier ≥ 1.");
+        }
+        if (typeof entry.included !== "boolean") {
+            throw new ValidationError("Le champ « included » doit être un booléen.");
+        }
+        return { studentId: entry.studentId, included: entry.included };
+    });
+}
+
 // ─── Query-string helpers (reporting filters, Phase 7) ───────────────────────
 // Query parameters arrive as strings (or string arrays); these helpers keep
 // the same explicit-validation spirit as the body helpers above. An empty

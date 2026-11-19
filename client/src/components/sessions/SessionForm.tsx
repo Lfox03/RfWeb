@@ -1,19 +1,26 @@
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
-import type { GroupRow } from "../../types/domain";
+import type { GroupRow, StudentWithCardRow } from "../../types/domain";
 import { toLocalInputValue } from "../../lib/format";
+import { StudentPicker } from "./StudentPicker";
+import type { ParticipantDeltas } from "./StudentPicker";
 
 export interface SessionFormValues {
     label: string;
     // Union of the checked groups — at least one group is required.
     groupIds: number[];
+    // Individual inclusion/exclusion deltas on top of the groups (real
+    // deviations only : inclusions outside the checked groups, exclusions
+    // despite a checked group). Empty array when nothing deviates.
+    participants: Array<{ studentId: number; included: boolean }>;
     scheduledAt: string;
     durationMinutes: number;
 }
 
 interface SessionFormProps {
     groups: GroupRow[];
+    students: StudentWithCardRow[];
     busy?: boolean;
     submitLabel?: string;
     // Pre-filled slot chosen by click/drag on the calendar grid:
@@ -27,12 +34,16 @@ interface SessionFormProps {
 // Create-session form. A session covers ONE OR SEVERAL groups (a shared
 // lesson): the roster is the union of the checked groups, hence a checkbox
 // list rather than a single select — and at least one group must be checked
-// (there is no longer an implicit « all students » session). Only the minimal
-// validation the API needs is done client-side (required label, numeric
-// duration, non-empty group selection); the backend stays authoritative and
-// its messages are shown as-is.
+// (there is no longer an implicit « all students » session). On top of that
+// base, INDIVIDUAL students can be selected (inclusions/exclusions — the same
+// deltas a series carries) : an « included » student joins the roster without
+// being in a checked group, an « excluded » one leaves it despite their group.
+// Only the minimal validation the API needs is done client-side (required
+// label, numeric duration, non-empty group selection); the backend stays
+// authoritative and its messages are shown as-is.
 export function SessionForm({
     groups,
+    students,
     busy,
     submitLabel = "Créer la session",
     initialScheduledAt,
@@ -42,6 +53,7 @@ export function SessionForm({
 }: SessionFormProps) {
     const [label, setLabel] = useState("");
     const [groupIds, setGroupIds] = useState<number[]>([]);
+    const [participants, setParticipants] = useState<ParticipantDeltas>(new Map());
     const [scheduledAt, setScheduledAt] = useState(initialScheduledAt ?? toLocalInputValue(null));
     const [duration, setDuration] = useState(String(initialDurationMinutes ?? 10));
 
@@ -51,8 +63,9 @@ export function SessionForm({
         );
     };
 
-    // A student belongs to only one group: the sum of the checked groups'
-    // headcounts is exactly the roster size.
+    // A student belongs to only one group: the union of the checked groups is
+    // the base roster, adjusted by the individual deltas (inclusions outside,
+    // exclusions despite a group).
     const selectedCount = useMemo(
         () => groupIds.reduce((sum, id) => sum + (groups.find((g) => g.id === id)?.student_count ?? 0), 0),
         [groupIds, groups],
@@ -65,6 +78,10 @@ export function SessionForm({
         onSubmit({
             label: trimmed,
             groupIds,
+            participants: [...participants.entries()].map(([studentId, included]) => ({
+                studentId,
+                included,
+            })),
             scheduledAt: new Date(scheduledAt).toISOString(),
             durationMinutes: Number(duration) || 10,
         });
@@ -113,8 +130,24 @@ export function SessionForm({
                 <p className="field__hint">
                     {groupIds.length === 0
                         ? "Sélectionnez au moins un groupe"
-                        : `Liste d'appel : ${selectedCount} étudiant(s) au total.`}
+                        : `Liste d'appel de base : ${selectedCount} étudiant(s), ajustée par les écarts individuels ci-dessous.`}
                 </p>
+            </fieldset>
+
+            <fieldset className="field">
+                <legend>Participants individuels (facultatif)</legend>
+                <p className="field__hint">
+                    Par dérogation à l'appartenance aux groupes : un étudiant « inclus » participe sans être dans un
+                    groupe coché ; un étudiant « exclu » ne participe pas malgré son groupe. Les membres des groupes
+                    cochés n'ont rien à ajouter.
+                </p>
+                <StudentPicker
+                    groups={groups}
+                    students={students}
+                    selectedGroupIds={groupIds}
+                    value={participants}
+                    onChange={setParticipants}
+                />
             </fieldset>
 
             <div className="field-row">

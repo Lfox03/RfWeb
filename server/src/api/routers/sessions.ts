@@ -12,6 +12,7 @@ import {
     vInt,
     vIntArray,
     vIsoDate,
+    vParticipants,
     vString,
 } from "../validate";
 import { getClock } from "../../core/clock";
@@ -64,19 +65,30 @@ sessionsRouter.get(
 sessionsRouter.get(
     "/:id",
     asyncHandler(async (req, res) => {
-        ok(res, sessionService.get(parseIdParam(req.params.id, "session")));
+        ok(res, sessionService.detail(parseIdParam(req.params.id, "session")));
     }),
 );
 
 // A session carries ONE or MORE groups (scope = UNION of the groups'
 // students) — at least one group is required (service). « groupIds »
 // (array) is the current shape; « groupId » (single) remains accepted for
-// compatibility, but both fields together are refused.
+// compatibility, but both fields together are refused. An optional
+// « participants » array ([{ studentId, included }]) selects INDIVIDUAL
+// students on top of the groups — included = true adds a student outside the
+// checked groups, included = false removes one despite their group (the delta
+// wins over group membership). It is the same shape series accept.
 sessionsRouter.post(
     "/",
     asyncHandler(async (req, res) => {
         const body = requireBody(req.body);
-        rejectUnknownFields(body, ["label", "groupId", "groupIds", "scheduledAt", "durationMinutes"]);
+        rejectUnknownFields(body, [
+            "label",
+            "groupId",
+            "groupIds",
+            "participants",
+            "scheduledAt",
+            "durationMinutes",
+        ]);
         const groupIds = vIntArray(body, "groupIds", { min: 1, maxItems: 100 });
         const legacyGroupId = vInt(body, "groupId", { min: 1 });
         if (groupIds !== undefined && legacyGroupId !== undefined) {
@@ -87,6 +99,7 @@ sessionsRouter.post(
             sessionService.create({
                 label: vString(body, "label", { required: true, min: 1, max: 200 })!,
                 groupIds: groupIds ?? (legacyGroupId !== undefined ? [legacyGroupId] : []),
+                participants: vParticipants(body),
                 // "now" comes from the injected clock (core/clock.ts): the
                 // scheduling window follows a FakeClock in tests.
                 scheduledAt: vIsoDate(body, "scheduledAt") ?? getClock().now().toISOString(),
@@ -100,7 +113,9 @@ sessionsRouter.post(
 );
 
 // Edit ONE scheduled session (« modifier ce cours ») : label, UTC instant
-// (standalone sessions only) and/or duration. Only scheduled rows (409
+// (standalone sessions only), duration and/or the INDIVIDUAL participant
+// selection (« participants », which REPLACES the session's whole
+// inclusion/exclusion delta set). Only scheduled rows (409
 // SESSION_INVALID_TRANSITION otherwise) ; moving the UTC instant of a SERIES
 // OCCURRENCE is refused (409 SESSION_OCCURRENCE_MOVE) — reprogramming an
 // occurrence and its follow-ups is PATCH /api/series/:id.
@@ -108,13 +123,14 @@ sessionsRouter.patch(
     "/:id",
     asyncHandler(async (req, res) => {
         const body = requireBody(req.body);
-        rejectUnknownFields(body, ["label", "scheduledAt", "durationMinutes"]);
+        rejectUnknownFields(body, ["label", "scheduledAt", "durationMinutes", "participants"]);
         ok(
             res,
             sessionService.updateScheduled(parseIdParam(req.params.id, "session"), {
                 label: vString(body, "label", { min: 1, max: 200 }),
                 scheduledAt: vIsoDate(body, "scheduledAt"),
                 durationMinutes: vInt(body, "durationMinutes", { min: 1, max: 1440 }),
+                participants: vParticipants(body),
             }),
         );
     }),

@@ -55,6 +55,32 @@ export function createSessionParticipantRepository(db: DatabaseHandle) {
             );
         },
 
+        // Replaces the WHOLE delta set of ONE session in a single transaction
+        // (editing an individual-participant selection after creation). Unlike
+        // the generation-driven sync, this is an explicit authoring decision:
+        // every resulting row is written explicit (inherited = 0). For a
+        // standalone one-off session every delta already is explicit, so this
+        // is a faithful full replace ; for a series occurrence it pins the
+        // current selection as a per-occurrence override (a later « this and
+        // following » series edit never rewrites inherited = 0 rows).
+        replaceParticipants(sessionId: number, deltas: ParticipantDelta[]): void {
+            db.transaction(() => {
+                const now = isoNow();
+                db.prepare("DELETE FROM session_participants WHERE session_id = ?").run(sessionId);
+                const insert = db.prepare(
+                    `INSERT INTO session_participants (session_id, student_id, included, inherited, created_at, updated_at)
+                     VALUES (?, ?, ?, 0, ?, ?)
+                     ON CONFLICT (session_id, student_id)
+                     DO UPDATE SET included = excluded.included,
+                                   inherited = 0,
+                                   updated_at = excluded.updated_at`,
+                );
+                for (const delta of deltas) {
+                    insert.run(sessionId, delta.studentId, delta.included ? 1 : 0, now, now);
+                }
+            })();
+        },
+
         // Replaces the INHERITED copy of the series' deltas carried by an
         // occurrence (series edited « this and following »). Explicit rows
         // (inherited = 0) always win : they are never deleted and an

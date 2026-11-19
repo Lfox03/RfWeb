@@ -20,6 +20,7 @@ import type {
     GroupRow,
     SessionScanRow,
     SessionWithGroups,
+    StudentWithCardRow,
 } from "../types/domain";
 import type { ServerEvent } from "../types/websocket";
 import { Loading, ErrorState, EmptyState } from "../components/common/StateBlocks";
@@ -49,6 +50,9 @@ export function DashboardPage() {
 
     const [groups, setGroups] = useState<GroupRow[] | null>(null);
     const [groupsError, setGroupsError] = useState<unknown>(null);
+    // Students feed the create form's individual-participant picker — loaded
+    // lazily the first time the create dialog opens.
+    const [students, setStudents] = useState<StudentWithCardRow[] | null>(null);
     const [creating, setCreating] = useState(false);
     const [busy, setBusy] = useState(false);
     const [beeping, setBeeping] = useState(false);
@@ -155,6 +159,23 @@ export function DashboardPage() {
         loadGroups();
     }, [loadGroups]);
 
+    // Lazy-load the student list the first time the create dialog opens (the
+    // individual-participant picker needs the real roster, no demo data).
+    useEffect(() => {
+        if (!creating || students !== null) return;
+        let cancelled = false;
+        listStudents()
+            .then((res) => {
+                if (!cancelled) setStudents(res.rows);
+            })
+            .catch(() => {
+                if (!cancelled) setStudents([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [creating, students]);
+
     const groupsLabel = (ids: number[]): string =>
         ids.length === 0
             ? "Tous les étudiants"
@@ -163,7 +184,11 @@ export function DashboardPage() {
     const handleCreate = async (values: SessionFormValues): Promise<void> => {
         setBusy(true);
         try {
-            const created = await createSession(values);
+            const created = await createSession({
+                ...values,
+                // Aucun écart individuel → champ omis (le serveur crée sans participants).
+                participants: values.participants.length > 0 ? values.participants : undefined,
+            });
             setSession(created);
             setCreating(false);
             push("success", "Session créée.");
@@ -362,12 +387,17 @@ export function DashboardPage() {
 
             {creating && (
                 <Modal title="Nouvelle session" onClose={() => setCreating(false)}>
-                    <SessionForm
-                        groups={groups ?? []}
-                        busy={busy}
-                        onSubmit={(v) => void handleCreate(v)}
-                        onCancel={() => setCreating(false)}
-                    />
+                    {students === null ? (
+                        <Loading text="Chargement des étudiants…" />
+                    ) : (
+                        <SessionForm
+                            groups={groups ?? []}
+                            students={students}
+                            busy={busy}
+                            onSubmit={(v) => void handleCreate(v)}
+                            onCancel={() => setCreating(false)}
+                        />
+                    )}
                 </Modal>
             )}
         </div>

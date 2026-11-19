@@ -109,6 +109,27 @@ export interface SessionWithGroups extends SessionRow {
     created_by_username: string | null;
 }
 
+// Écart individuel propre à une session (session_participants) : included = 1
+// → l'étudiant rejoint la séance sans être dans un de ses groupes ; included =
+// 0 → il en sort malgré son groupe. inherited (migration 009) : 1 = copie
+// héritée des écarts de la série (réinsérable par une édition de série), 0 =
+// écart explicite de la séance. Sur une séance ponctuelle autonome, tous les
+// écarts sont explicites (inherited = 0).
+export interface SessionParticipantRow {
+    session_id: number;
+    student_id: number;
+    included: number; // 0 | 1
+    inherited: number; // 0 | 1
+    created_at: string;
+    updated_at: string;
+}
+
+// GET /api/sessions/:id — séance + portée groupes + écarts individuels
+// (la liste pré-remplit l'éditeur de participants ; PATCH remplace tout).
+export interface SessionDetail extends SessionWithGroups {
+    participants: SessionParticipantRow[];
+}
+
 // Occurrence enrichrie par GET /api/sessions/calendar : la session complète
 // + son portée groupes + les métadonnées de sa série (NULL pour une session
 // autonome), le nom des groupes attachés (jointure, tri alphabetique) et le
