@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Typecheck + verify + build (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # engines: node >= 20.12 — covers the supported range + current dev version
+        node-version: [20.x, 22.x, 26.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # better-sqlite3 and node-hid bundle prebuilt N-API binaries, so no build tools
+      # are required (db:verify skips the dev-DB phase here — attendance.db is not committed).
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run db:verify
+      - run: npm run api:verify
+      - run: npm run build
+
+      # Boot smoke test of the COMPILED server (catches dist/ path regressions,
+      # e.g. the tsconfig rootDir/outDir ↔ rfid adapter require() parity).
+      - name: Boot smoke test (dist/server)
+        env:
+          RFID_DISABLED: 1
+          DB_PATH: ${{ runner.temp }}/smoke.db
+          HTTP_PORT: 3100
+          WS_PORT: 8100
+          LOG_LEVEL: warn
+        run: |
+          node dist/server/index.js &
+          server_pid=$!
+          curl --retry 30 --retry-delay 1 --retry-connrefused -sf \
+            http://127.0.0.1:3100/api/health | grep -q '"status":"ok"'
+          status=$?
+          kill $server_pid 2>/dev/null || true
+          exit $status
