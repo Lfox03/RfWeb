@@ -14,8 +14,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # engines: node >= 20.12 — covers the supported range + current dev version
-        node-version: [20.x, 22.x, 26.x]
+        # engines: node >= 22 (better-sqlite3 v13 dropped Node 20 — EBADENGINE)
+        # Node 20 is EOL; covers the two active LTS lines + current dev version
+        node-version: [22.x, 24.x, 26.x]
     steps:
       - uses: actions/checkout@v4
 

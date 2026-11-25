@@ -4,7 +4,7 @@
   "private": true,
   "description": "Système de pointage RFID — serveur Node/Express (TypeScript) + client React/Vite",
   "engines": {
-    "node": ">=20.12.0"
+    "node": ">=22"
   },
   "workspaces": [
     "client"

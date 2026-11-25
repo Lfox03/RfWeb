@@ -11,7 +11,7 @@ card reader, plus a React dashboard for staff and a dedicated kiosk screen for s
 
 ## Prerequisites
 
-- **Node.js ≥ 20.12** (CI tests 20, 22 and 26) and npm ≥ 10
+- **Node.js ≥ 22** (CI tests 22, 24 and 26) and npm ≥ 10
 - The USB RFID reader is optional: run with `RFID_DISABLED=1` for development without hardware
 - Native modules (`better-sqlite3`, `node-hid`) ship prebuilt binaries in their npm packages;
   if your npm blocks install scripts, no approval is needed (no compilation required)
