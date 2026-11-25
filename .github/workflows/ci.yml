@@ -25,9 +25,13 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
-      # better-sqlite3 and node-hid bundle prebuilt N-API binaries, so no build tools
-      # are required (db:verify skips the dev-DB phase here — attendance.db is not committed).
-      - run: npm ci
+      # --ignore-scripts: better-sqlite3 ships binding.gyp, so npm runs an IMPLICIT
+      # `node-gyp rebuild` install step — which needs a C++ toolchain (fails on
+      # windows-latest, wastes minutes compiling on ubuntu). The v13 tarball bundles
+      # per-platform prebuilds (same as node-hid; esbuild uses its @esbuild/*
+      # optional packages), so NO lifecycle script is needed at all.
+      # (db:verify skips the dev-DB phase here — attendance.db is not committed.)
+      - run: npm ci --ignore-scripts
 
       - run: npm run typecheck
       - run: npm run test:client
@@ -70,7 +74,9 @@ jobs:
           node-version: 22.x
           cache: npm
 
-      - run: npm ci
+      # Same rationale as the ubuntu job: prebuilds are bundled, and the implicit
+      # node-gyp rebuild for better-sqlite3 has no usable VS on windows-latest.
+      - run: npm ci --ignore-scripts
 
       - run: npm run typecheck
       - run: npm run test:client

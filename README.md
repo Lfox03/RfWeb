@@ -13,8 +13,11 @@ card reader, plus a React dashboard for staff and a dedicated kiosk screen for s
 
 - **Node.js ≥ 22** (CI tests 22, 24 and 26 on Ubuntu + 22 on Windows) and npm ≥ 10
 - The USB RFID reader is optional: run with `RFID_DISABLED=1` for development without hardware
-- Native modules (`better-sqlite3`, `node-hid`) ship prebuilt binaries in their npm packages;
-  if your npm blocks install scripts, no approval is needed (no compilation required)
+- Native modules (`better-sqlite3`, `node-hid`) ship prebuilt binaries in their npm packages —
+  nothing ever needs to compile. On npm without script approval (≤ 10), `npm install` still
+  runs better-sqlite3's *implicit* `node-gyp` step (it ships a `binding.gyp`) and wants a C++
+  toolchain; if that bites you, install with `npm install --ignore-scripts` (or use npm ≥ 11,
+  which gates unapproved scripts).
 
 ## Getting started
 
@@ -80,7 +83,7 @@ scan pipeline, WebSocket events, database layout, API conventions) lives in
 
 ## CI
 
-[GitHub Actions](.github/workflows/ci.yml) runs the full chain — `npm ci` → `typecheck` →
+[GitHub Actions](.github/workflows/ci.yml) runs the full chain — `npm ci --ignore-scripts` → `typecheck` →
 `test:client` → `db:verify` → `api:verify` → `build` → a boot smoke test of the built server
 (`GET /api/health`) — on Ubuntu with Node 22 / 24 / 26, and again on Windows with Node 22
 (the deployment target: Windows path/WAL handling and win32 native prebuilds get exercised).
