@@ -52,10 +52,14 @@ export function createSession(input: SessionInput): Promise<SessionWithGroups> {
 // Édition d'UNE session « programmée » (« modifier ce cours ») : libellé,
 // instant UTC et/ou durée et/ou sélection individuelle de participants. Le
 // champ « participants », s'il est présent, REMPLACE toute la liste des écarts
-// de la séance (le serveur ne fusionne pas). Le serveur refuse (409
-// SESSION_INVALID_TRANSITION) tout autre statut — l'historique démarré/terminé
-// n'est jamais réécrit. L'identité de série d'une occurrence reste intacte
-// (« cette occurrence et les suivantes » passe par PATCH /api/series/:id).
+// de la séance (le serveur ne fusionne pas). Pour une OCCURRENCE de série,
+// cet envoi matérialise les copies héritées en dérogations explicites
+// (inherited = 0) que les éditions de série suivantes ne resynchronisent plus
+// — le client n'envoie donc le champ QUE si la sélection a réellement changé.
+// Le serveur refuse (409 SESSION_INVALID_TRANSITION) tout autre statut —
+// l'historique démarré/terminé n'est jamais réécrit. L'identité de série d'une
+// occurrence reste intacte (« cette occurrence et les suivantes » passe par
+// PATCH /api/series/:id).
 export interface SessionSchedulePatch {
     label?: string;
     scheduledAt?: string;
