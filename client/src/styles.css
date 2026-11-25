@@ -377,6 +377,30 @@ a:hover {
   color: #fff;
 }
 
+/* Hamburger toggle — hidden on desktop, revealed on small screens (the
+   sidebar becomes an off-canvas drawer, see the responsive block). */
+.topbar__menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  margin-left: -8px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #fff;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Backdrop behind the off-canvas drawer — mobile only. */
+.sidebar-backdrop {
+  display: none;
+}
+
 /* ---------- Content ---------- */
 
 .content {
@@ -1763,22 +1787,53 @@ fieldset.field {
     grid-template-columns: 1fr;
     grid-template-areas:
       "topbar"
-      "sidebar"
       "content";
     height: auto;
     min-height: 100vh;
     overflow: visible;
   }
 
-  .sidebar {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 8px 10px;
+  /* Keep the bar (and its hamburger) reachable while the page scrolls. */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
   }
 
-  .sidebar__link {
-    white-space: nowrap;
+  .topbar__menu-btn {
+    display: inline-flex;
+  }
+
+  .topbar__menu-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  /* Sidebar becomes an off-canvas drawer sliding under the topbar. */
+  .sidebar {
+    position: fixed;
+    top: 54px;
+    left: 0;
+    bottom: 0;
+    z-index: 30;
+    width: 232px;
+    padding: 14px 10px;
+    flex-direction: column;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 4px 0 18px rgba(15, 23, 42, 0.35);
+  }
+
+  .sidebar--open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: rgba(15, 23, 42, 0.45);
   }
 
   .content {
