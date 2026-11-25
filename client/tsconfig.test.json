@@ -1,0 +1,12 @@
+{
+  // Typecheck des tests unitaires du client (npm run test:client).
+  // Les tests tournent sous Node (node:test), pas dans le navigateur :
+  // seule cette config voit @types/node — l'app elle-même n'est jamais
+  // polluée par les globaux Node.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "exclude": []
+}

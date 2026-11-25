@@ -66,9 +66,13 @@ export function formatWeekRangeLabel(mondayInclusive: string): string {
     const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
     const fmtFull = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" });
     const fmtDayMonth = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long" });
-    return sameMonth
-        ? `${start.getDate()} – ${fmtFull.format(end)}`
-        : `${fmtDayMonth.format(start)} – ${fmtFull.format(end)}`;
+    if (sameMonth) return `${start.getDate()} – ${fmtFull.format(end)}`;
+    // Semaine qui franchit le jour de l'an : l'année de départ ne doit pas
+    // rester sous-entendue (« 28 décembre 2026 – 3 janvier 2027 »).
+    if (start.getFullYear() === end.getFullYear()) {
+        return `${fmtDayMonth.format(start)} – ${fmtFull.format(end)}`;
+    }
+    return `${fmtFull.format(start)} – ${fmtFull.format(end)}`;
 }
 
 export function formatMinutes(min: number): string {

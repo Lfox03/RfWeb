@@ -21,7 +21,9 @@
     "db:migrate": "tsx server/src/db/cli/migrate.ts",
     "db:seed": "tsx server/src/db/cli/seed.ts",
     "db:verify": "tsx server/src/db/cli/verify.ts",
-    "api:verify": "tsx server/src/dev/verifyApi.ts"
+    "api:verify": "tsx server/src/dev/verifyApi.ts",
+    "test": "npm run test:client",
+    "test:client": "tsc -p client/tsconfig.test.json && tsx --test \"client/src/**/*.test.ts\""
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",
