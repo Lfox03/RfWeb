@@ -1,8 +1,8 @@
 // Kiosk header: session identity (label + group) and reader/realtime status.
 // Intentionally minimal — the kiosk is a presentation mode. The old « Pointage
 // RFID » brand is replaced by the menu button that reveals the kiosk controls
-// (sound, fullscreen) in a small dropdown; the menu closes on Escape or on any
-// click outside.
+// (sound, fullscreen, navigation back to the dashboard) in a small dropdown;
+// the menu closes on Escape or on any click outside.
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 

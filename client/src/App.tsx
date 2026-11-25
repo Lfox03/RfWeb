@@ -4,7 +4,8 @@
 // /login when anonymous) + WsProvider (single shared WebSocket). The admin
 // shell adds AppLayout; /kiosk stays chromeless (full-screen presentation).
 // Kiosk accounts (role « kiosk ») are bounced from the admin shell to /kiosk
-// and land there directly after login.
+// and land there directly after login; the loopback pseudo-kiosk session is
+// bounced to /login instead (it must be able to reach the dashboard).
 
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
@@ -54,11 +55,14 @@ function RequireAdmin({ children }: { children: ReactNode }) {
 
 // Kiosk accounts have exactly one screen: /kiosk. Inside the admin shell they
 // are redirected to the kiosk before anything renders (the API additionally
-// refuses them every non-GET request).
+// refuses them every non-GET request). The loopback LOCAL_KIOSK pseudo-user
+// (id 0, attached to cookieless GETs on the server machine) is the exception:
+// bouncing it to /kiosk would trap it there, so it is sent to /login instead
+// where a real account can be used to reach the dashboard.
 function RequireNotKiosk({ children }: { children: ReactNode }) {
-    const { isKiosk } = useAuth();
+    const { isKiosk, isLocalKiosk } = useAuth();
     if (isKiosk) {
-        return <Navigate to="/kiosk" replace />;
+        return <Navigate to={isLocalKiosk ? "/login" : "/kiosk"} replace />;
     }
     return <>{children}</>;
 }

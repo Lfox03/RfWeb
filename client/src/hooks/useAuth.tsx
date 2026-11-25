@@ -19,6 +19,10 @@ interface AuthContextValue {
     user: AuthUser | null;
     isAdmin: boolean;
     isKiosk: boolean;
+    // The loopback pseudo-session (server LOCAL_KIOSK_USER, id 0): the local
+    // console browsing /kiosk WITHOUT any real account. Not an account —
+    // reaching the admin shell from it must go through a real login.
+    isLocalKiosk: boolean;
     // Returns the authenticated user so callers can branch on the role (the
     // « kiosk » account must land directly on /kiosk).
     login: (username: string, password: string) => Promise<AuthUser>;
@@ -94,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             user,
             isAdmin: user?.role === "admin",
             isKiosk: user?.role === "kiosk",
+            isLocalKiosk: user?.id === 0,
             login,
             logout,
         }),

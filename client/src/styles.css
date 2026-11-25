@@ -244,6 +244,12 @@ a:hover {
   color: var(--muted);
 }
 
+.login__switch {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
 /* ---------- Shell layout ---------- */
 
 .shell {
@@ -1637,6 +1643,12 @@ fieldset.field {
 .kiosk__controls-hint {
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.kiosk__controls-separator {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border);
 }
 
 .kiosk__btn {

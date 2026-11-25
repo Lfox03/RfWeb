@@ -12,15 +12,17 @@ export function homeFor(role: UserRole | undefined): string {
 }
 
 export function LoginPage() {
-    const { status, user, login } = useAuth();
+    const { status, user, login, isLocalKiosk } = useAuth();
     const navigate = useNavigate();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
-    // Already authenticated (e.g. after a reload): skip the form.
-    if (status === "authenticated") {
+    // Already authenticated (e.g. after a reload): skip the form — except for
+    // the loopback pseudo-kiosk session (the local console, no real account):
+    // it must keep the form so an admin can log in on the server machine.
+    if (status === "authenticated" && !isLocalKiosk) {
         return <Navigate to={homeFor(user?.role)} replace />;
     }
 
@@ -77,6 +79,14 @@ export function LoginPage() {
                 <button type="submit" className="btn btn--primary btn--block" disabled={busy}>
                     {busy ? "Connexion…" : "Se connecter"}
                 </button>
+
+                {/* Kiosk entry: on the server machine /kiosk needs no login
+                    (loopback exception); elsewhere it simply comes back here. */}
+                <div className="login__switch">
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => navigate("/kiosk")}>
+                        Ouvrir en mode borne
+                    </button>
+                </div>
             </form>
         </div>
     );

@@ -5,9 +5,9 @@
 // (the route lives inside its own WsProvider): no session control, no RFID
 // access, no second scan loop. Leaving this page never stops the session.
 //
-// The controls (sound, fullscreen) live in a small menu opened from the
-// header (no exit button: the dashboard and the kiosk are distinct
-// surfaces).
+// The controls (sound, fullscreen, dashboard shortcut) live in a small menu
+// opened from the header. Leaving the kiosk is pure navigation — it never
+// stops or disturbs the running session.
 
 import { useEffect, useRef } from "react";
 
