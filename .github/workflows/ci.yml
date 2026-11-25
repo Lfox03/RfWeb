@@ -30,24 +30,66 @@ jobs:
       - run: npm ci
 
       - run: npm run typecheck
+      - run: npm run test:client
       - run: npm run db:verify
       - run: npm run api:verify
       - run: npm run build
 
       # Boot smoke test of the COMPILED server (catches dist/ path regressions,
-      # e.g. the tsconfig rootDir/outDir ↔ rfid adapter require() parity).
-      - name: Boot smoke test (dist/server)
-        env:
-          RFID_DISABLED: 1
-          DB_PATH: ${{ runner.temp }}/smoke.db
-          HTTP_PORT: 3100
-          WS_PORT: 8100
-          LOG_LEVEL: warn
+      # e.g. the rfid adapter's ../../..-relative require). Offline: RFID disabled,
+      # throwaway DB, ephemeral ports. A failed standalone WS bind is a non-fatal
+      # warning by design, so the only hard assertion is HTTP health.
+      - name: Boot smoke test (compiled dist, RFID offline)
         run: |
-          node dist/server/index.js &
-          server_pid=$!
-          curl --retry 30 --retry-delay 1 --retry-connrefused -sf \
-            http://127.0.0.1:3100/api/health | grep -q '"status":"ok"'
-          status=$?
-          kill $server_pid 2>/dev/null || true
-          exit $status
+          mkdir -p "$RUNNER_TEMP/smoke"
+          RFID_DISABLED=1 DB_PATH="$RUNNER_TEMP/smoke/smoke.db" HTTP_PORT=3100 WS_PORT=8100 \
+            node dist/server/index.js > server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3100/api/health | grep -q '"status":"ok"'; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then cat server.log; exit 1; fi
+          echo "Boot smoke OK"
+
+  # The deployment target is Windows (school machine) and local dev is Windows:
+  # run the whole suite there too — Windows-specific WAL/lock handling, path
+  # separators in compiled requires, and the win32 better-sqlite3/node-hid
+  # prebuilds only get exercised on this job. Single LTS floor version.
+  windows:
+    name: Windows (Node 22)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run test:client
+      - run: npm run db:verify
+      - run: npm run api:verify
+      - run: npm run build
+
+      - name: Boot smoke test (compiled dist, RFID offline)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke"
+          RFID_DISABLED=1 DB_PATH="$RUNNER_TEMP/smoke/smoke.db" HTTP_PORT=3100 WS_PORT=8100 \
+            node dist/server/index.js > server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3100/api/health | grep -q '"status":"ok"'; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then cat server.log; exit 1; fi
+          echo "Boot smoke OK on Windows"

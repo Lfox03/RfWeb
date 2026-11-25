@@ -11,7 +11,7 @@ card reader, plus a React dashboard for staff and a dedicated kiosk screen for s
 
 ## Prerequisites
 
-- **Node.js ≥ 22** (CI tests 22, 24 and 26) and npm ≥ 10
+- **Node.js ≥ 22** (CI tests 22, 24 and 26 on Ubuntu + 22 on Windows) and npm ≥ 10
 - The USB RFID reader is optional: run with `RFID_DISABLED=1` for development without hardware
 - Native modules (`better-sqlite3`, `node-hid`) ship prebuilt binaries in their npm packages;
   if your npm blocks install scripts, no approval is needed (no compilation required)
@@ -44,10 +44,13 @@ Open **http://localhost:5173** in development (Vite proxies `/api` and `/ws` to 
 | `npm run db:seed` | Seed demo data + admin account (never runs automatically) |
 | `npm run db:verify` | Database verification suite (~97 checks) |
 | `npm run api:verify` | Full API verification suite (~550 checks) — this project's test suite |
+| `npm run test:client` | Client unit tests for the pure helpers (`node --test`, typechecked first) |
 
-There is no test/lint framework: the two `verify` CLIs **are** the test suite. They run on a
-fresh temporary SQLite database with an emulated reader and ephemeral ports, so they never
-touch your real `attendance.db`.
+There is no test/lint framework: the two `verify` CLIs **are** the server test suite;
+`npm run test:client` adds unit tests for the client's pure helper functions using Node's
+built-in test runner (still no framework). The verify CLIs run on a fresh temporary SQLite
+database with an emulated reader and ephemeral ports, so they never touch your real
+`attendance.db`.
 
 ## Configuration
 
@@ -77,6 +80,7 @@ scan pipeline, WebSocket events, database layout, API conventions) lives in
 
 ## CI
 
-[GitHub Actions](.github/workflows/ci.yml) runs, on Node 20 / 22 / 26: `npm ci` →
-`typecheck` → `db:verify` → `api:verify` → `build` → a boot smoke test of the built server
-(`GET /api/health`).
+[GitHub Actions](.github/workflows/ci.yml) runs the full chain — `npm ci` → `typecheck` →
+`test:client` → `db:verify` → `api:verify` → `build` → a boot smoke test of the built server
+(`GET /api/health`) — on Ubuntu with Node 22 / 24 / 26, and again on Windows with Node 22
+(the deployment target: Windows path/WAL handling and win32 native prebuilds get exercised).
